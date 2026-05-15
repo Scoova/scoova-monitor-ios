@@ -10,7 +10,7 @@ monitoring. iOS 14+, no Objective-C bridging required.
 In Xcode → File → Add Packages → enter:
 
 ```
-https://github.com/zaidzedoo007/scoova-monitor
+https://github.com/Scoova/scoova-monitor-ios
 ```
 
 Select the `ScoovaMonitor` library and add it to your app target.
@@ -18,7 +18,7 @@ Select the `ScoovaMonitor` library and add it to your app target.
 ### Package.swift
 
 ```swift
-.package(url: "https://github.com/zaidzedoo007/scoova-monitor", from: "1.4.0")
+.package(url: "https://github.com/Scoova/scoova-monitor-ios", from: "1.4.0")
 ```
 
 Then:
