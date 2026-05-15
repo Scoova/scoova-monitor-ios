@@ -12,13 +12,11 @@ internal final class PerformanceTracker {
 
     /// Real process start time via sysctl(KERN_PROC_PID, getpid()).
     ///
-    /// The previous version used
-    ///   Date(timeIntervalSinceNow: -ProcessInfo.processInfo.systemUptime)
-    /// which gives **system** boot time, not process start. On a real
-    /// device that's been on for hours, that produced cold_start values
-    /// in the 2-26 *million* milliseconds range (i.e. how long the
-    /// phone had been on before launch). The dashboard's startup
-    /// percentile chart was therefore meaningless.
+    /// This must be the *process* start time. `ProcessInfo.systemUptime`
+    /// gives system boot time instead — on a device that's been powered
+    /// on for hours, subtracting that would report a cold start of
+    /// however long the phone had been on, not the actual launch time.
+    /// sysctl(KERN_PROC_PID) is the correct source.
     ///
     /// Falls back to "now" if sysctl ever fails — better to ship a tiny
     /// number than a bogus one.
