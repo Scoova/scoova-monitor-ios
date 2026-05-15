@@ -24,7 +24,7 @@ Select the `ScoovaMonitor` library and add it to your app target.
 Then:
 
 ```swift
-.product(name: "ScoovaMonitor", package: "scoova-monitor")
+.product(name: "ScoovaMonitor", package: "scoova-monitor-ios")
 ```
 
 ## Usage
@@ -139,9 +139,8 @@ ScoovaMonitor.shared.clearLocalUserData()
 ```
 
 This drops queued events, the pending crash file, breadcrumbs, the
-anonymous installation ID, the session counter, and any cached location.
-Pair it with a server-side `DELETE /v1/ingest/me/{userId}` to erase the
-server copy.
+anonymous installation ID, and the session counter. Pair it with a
+server-side `DELETE /v1/ingest/me/{userId}` to erase the server copy.
 
 ### Manual flush
 
@@ -154,20 +153,35 @@ batch size threshold is hit — manual `flush()` is rarely needed.
 
 ## Symbolication
 
-Upload `.dSYM` archives so server-side stack traces are de-obfuscated:
+iOS crash reports arrive as raw memory addresses. To get readable stack
+traces in the dashboard, each release build's **dSYM** files — the symbol
+maps Xcode strips out of the shipping binary — need to be uploaded.
 
-```bash
-node sdk-ios/scripts/scoova-upload-dsyms.js \
-    --api-key sm_your_api_key \
-    --version 1.0.0 \
-    --build 42 \
+It's a **one-time setup**, then it runs automatically on every release
+build (the same model Crashlytics uses). In Xcode: select your app target
+→ **Build Phases** → **+** → **New Run Script Phase**, drag it **after**
+the *Embed Frameworks* phase, and paste:
+
+```sh
+if [ "$CONFIGURATION" = "Release" ]; then
+  SCRIPT="${BUILD_DIR%Build/*}SourcePackages/checkouts/scoova-monitor-ios/scripts/scoova-upload-dsyms.js"
+  node "$SCRIPT" \
+    --api-key "$SCOOVA_API_KEY" \
+    --version "$MARKETING_VERSION" \
+    --build "$CURRENT_PROJECT_VERSION" \
     --dir "$DWARF_DSYM_FOLDER_PATH"
+fi
 ```
 
-The script walks `--dir` for `*.app.dSYM` bundles, zips each one with the
-system `zip` binary, and uploads to `/v1/upload/mapping`. Wire it into a
-Run Script Build Phase in Xcode (after the *Embed Frameworks* phase) —
-run the script with `--help` for the exact snippet.
+Add `SCOOVA_API_KEY` as a User-Defined Build Setting on the target (or
+paste your key directly). That's the whole setup — every Release build now
+uploads its own dSYMs.
+
+The script ships **inside this Swift Package**, so it is already on disk
+once you add the SDK — nothing extra to download. It needs Node on the
+build machine (preinstalled on most Macs; CI runners may need a setup
+step). It walks `$DWARF_DSYM_FOLDER_PATH` for `*.app.dSYM` bundles, zips
+each, and uploads them to `/v1/upload/mapping`.
 
 ## Building from source
 
