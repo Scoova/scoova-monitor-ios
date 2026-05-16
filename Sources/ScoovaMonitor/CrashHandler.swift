@@ -114,25 +114,36 @@ internal final class CrashHandler {
             let fileURL = self.pendingCrashFile()
             guard let data = try? Data(contentsOf: fileURL),
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            self.postJSON(json)
-            try? FileManager.default.removeItem(at: fileURL)
-            ScoovaMonitor.shared.log("Sent pending crash from previous session")
+            // Confirmed delivery: keep the on-disk copy unless the server
+            // accepted it (2xx). Previously this was a fire-and-forget POST
+            // followed by an unconditional delete — a crash from the last
+            // session was lost whenever that POST failed (offline launch,
+            // transient 5xx, process killed mid-flight). Now a failed send
+            // simply replays on the next launch.
+            if self.sendReportSync(json) {
+                try? FileManager.default.removeItem(at: fileURL)
+                ScoovaMonitor.shared.log("Sent pending crash from previous session")
+            }
         }
     }
 
     // MARK: - Exception Handling
 
     private static func handleException(_ exception: NSException) {
-        let handler = ScoovaMonitor.shared.crashHandler
-        let report = handler?.buildFullCrashReport(
+        guard let handler = ScoovaMonitor.shared.crashHandler else { return }
+        let report = handler.buildFullCrashReport(
             exceptionType: exception.name.rawValue,
             message: exception.reason ?? "No reason",
             stackTrace: exception.callStackSymbols.joined(separator: "\n"),
             isFatal: true
         )
-        if let report = report {
-            handler?.saveCrashToDisk(report)
-            handler?.sendReportSync(report)
+        // Save first so the report survives if the in-handler POST is cut
+        // short, then deliver synchronously. Drop the on-disk copy only on
+        // confirmed receipt — otherwise it stays and sendPendingCrashes()
+        // replays it next launch (instead of silently double-sending).
+        handler.saveCrashToDisk(report)
+        if handler.sendReportSync(report) {
+            try? FileManager.default.removeItem(at: handler.pendingCrashFile())
         }
     }
 
