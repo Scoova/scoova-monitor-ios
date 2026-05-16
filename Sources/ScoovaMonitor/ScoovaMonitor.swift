@@ -275,7 +275,7 @@ public final class ScoovaMonitor {
 
     internal func log(_ message: String) {
         #if DEBUG
-        print("[ScoovaMonitor] \(message)")
+        NSLog("[ScoovaMonitor] %@", message)
         #endif
     }
 

@@ -1,7 +1,7 @@
 import Foundation
 import UIKit
 
-internal let kSDKVersion = "1.4.0"
+internal let kSDKVersion = "1.4.1"
 
 internal final class DeviceContext {
     static let shared = DeviceContext()

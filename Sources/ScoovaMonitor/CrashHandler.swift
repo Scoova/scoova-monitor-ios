@@ -37,6 +37,7 @@ internal final class CrashHandler {
     /// dashboard's Crashes UI can show ANR rate alongside crash rate, the
     /// way Firebase / Sentry / Crashlytics do.
     func reportHang(durationThresholdSeconds: Double, source: String, mainThreadStack: String? = nil) {
+        ScoovaMonitor.shared.log("Hang captured (>\(durationThresholdSeconds)s, \(source)) — uploading")
         queue.async { [weak self] in
             guard let self = self else { return }
             let stack = mainThreadStack
@@ -48,16 +49,21 @@ internal final class CrashHandler {
                 isFatal: false
             )
             self.saveCrashToDisk(report)
-            self.sendReportSync(report)
-            try? FileManager.default.removeItem(at: self.pendingCrashFile())
+            // Keep the on-disk copy unless the server confirmed receipt —
+            // a failed send then replays on the next launch.
+            if self.sendReportSync(report) {
+                try? FileManager.default.removeItem(at: self.pendingCrashFile())
+            }
         }
     }
 
     func reportNonFatal(_ error: Error, context: String? = nil) {
+        let errType = String(describing: type(of: error))
+        ScoovaMonitor.shared.log("Non-fatal error captured: \(errType) — uploading")
         queue.async { [weak self] in
             guard let self = self else { return }
             let report = self.buildFullCrashReport(
-                exceptionType: String(describing: type(of: error)),
+                exceptionType: errType,
                 message: error.localizedDescription + (context.map { " | \($0)" } ?? ""),
                 stackTrace: Thread.callStackSymbols.joined(separator: "\n"),
                 isFatal: false
@@ -66,16 +72,12 @@ internal final class CrashHandler {
             // it via sendPendingCrashes() even if the in-process sync
             // POST below fails / gets killed mid-flight.
             self.saveCrashToDisk(report)
-            // Then attempt synchronous delivery (5s timeout). Was
-            // previously fire-and-forget URLSession.dataTask, which
-            // got cancelled when XCUITest exited the app — so handled
-            // crashes never landed on the server. The sync path blocks
-            // logError() for up to 5s, but that's the right tradeoff
-            // for a path the host explicitly asked us to record.
-            self.sendReportSync(report)
-            // Successfully sent — clear the disk copy so we don't
-            // re-send on next launch.
-            try? FileManager.default.removeItem(at: self.pendingCrashFile())
+            // Attempt synchronous delivery. Only drop the on-disk copy if
+            // the server actually accepted it — otherwise it stays and
+            // sendPendingCrashes() replays it on the next launch.
+            if self.sendReportSync(report) {
+                try? FileManager.default.removeItem(at: self.pendingCrashFile())
+            }
         }
     }
 
@@ -367,13 +369,52 @@ internal final class CrashHandler {
 
     // MARK: - Send / Save
 
+    /// Coerce a crash payload into something JSONSerialization always
+    /// accepts. A single non-finite Double (NaN / Infinity — e.g. a rate
+    /// with a zero denominator, or simulator battery state) otherwise makes
+    /// the whole report unserializable, and it was being dropped silently
+    /// by *both* the network send and the on-disk replay fallback.
+    private func jsonSafe(_ value: Any) -> Any {
+        switch value {
+        case let dict as [String: Any]:
+            var out: [String: Any] = [:]
+            for (k, v) in dict { out[k] = jsonSafe(v) }
+            return out
+        case let arr as [Any]:
+            return arr.map { jsonSafe($0) }
+        case let b as Bool:   return b
+        case let i as Int:    return i
+        case let d as Double: return d.isFinite ? d : 0
+        case let f as Float:  return f.isFinite ? f : 0
+        case let s as String: return s
+        case is NSNull:       return value
+        default:              return String(describing: value)
+        }
+    }
+
+    /// Serialize a crash payload, sanitizing it first. Returns nil only if
+    /// it is still invalid afterward — and logs it, never fails silently.
+    private func crashJSON(_ payload: [String: Any]) -> Data? {
+        let safe = jsonSafe(payload)
+        guard JSONSerialization.isValidJSONObject(safe),
+              let data = try? JSONSerialization.data(withJSONObject: safe) else {
+            ScoovaMonitor.shared.log("Crash report dropped: payload not serializable")
+            return nil
+        }
+        return data
+    }
+
     private func sendReport(_ payload: [String: Any]) {
         postJSON(payload)
     }
 
-    private func sendReportSync(_ payload: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
-        guard let url = URL(string: "\(endpoint)/v1/ingest/crashes") else { return }
+    /// Synchronously POST a crash report. Returns true only if the server
+    /// accepted it (2xx) — callers use this to decide whether to keep the
+    /// on-disk copy for next-launch replay.
+    @discardableResult
+    private func sendReportSync(_ payload: [String: Any]) -> Bool {
+        guard let data = crashJSON(payload) else { return false }
+        guard let url = URL(string: "\(endpoint)/v1/ingest/crashes") else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -384,14 +425,30 @@ internal final class CrashHandler {
         // valid.
         request.setValue(ScoovaMonitor.shared.bundleId, forHTTPHeaderField: "X-Bundle-Id")
         request.httpBody = data
-        request.timeoutInterval = 5
+        request.timeoutInterval = 10
+        var delivered = false
         let semaphore = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: request) { _, _, _ in semaphore.signal() }.resume()
-        _ = semaphore.wait(timeout: .now() + 5)
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let error = error {
+                ScoovaMonitor.shared.log("Crash upload failed: \(error.localizedDescription)")
+            } else if let http = response as? HTTPURLResponse {
+                if (200...299).contains(http.statusCode) {
+                    delivered = true
+                    ScoovaMonitor.shared.log("Crash report uploaded (HTTP \(http.statusCode))")
+                } else {
+                    ScoovaMonitor.shared.log("Crash upload rejected: HTTP \(http.statusCode)")
+                }
+            }
+            semaphore.signal()
+        }.resume()
+        if semaphore.wait(timeout: .now() + 12) == .timedOut {
+            ScoovaMonitor.shared.log("Crash upload timed out")
+        }
+        return delivered
     }
 
     private func postJSON(_ payload: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        guard let data = crashJSON(payload) else { return }
         guard let url = URL(string: "\(endpoint)/v1/ingest/crashes") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -399,15 +456,17 @@ internal final class CrashHandler {
         request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue(ScoovaMonitor.shared.bundleId, forHTTPHeaderField: "X-Bundle-Id")
         request.httpBody = data
-        URLSession.shared.dataTask(with: request) { _, _, error in
+        URLSession.shared.dataTask(with: request) { _, response, error in
             if let error = error {
                 ScoovaMonitor.shared.log("Failed to send crash: \(error.localizedDescription)")
+            } else if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+                ScoovaMonitor.shared.log("Crash upload rejected: HTTP \(http.statusCode)")
             }
         }.resume()
     }
 
     private func saveCrashToDisk(_ payload: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        guard let data = crashJSON(payload) else { return }
         try? data.write(to: pendingCrashFile())
     }
 
