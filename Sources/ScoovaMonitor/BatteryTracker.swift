@@ -1,7 +1,13 @@
 import Foundation
 import UIKit
 
-/// Tracks battery drain rate, level, and temperature for performance monitoring.
+/// Tracks battery drain rate and level, plus OS thermal-state warnings.
+///
+/// Note: iOS provides no public API for battery temperature, so this
+/// tracker deliberately does NOT report a `battery/temperature` metric —
+/// emitting one would mean inventing a number. The OS-provided
+/// `ProcessInfo.thermalState` is reported instead, and only as a real
+/// event when it actually degrades to serious/critical.
 internal final class BatteryTracker {
 
     private let batcher: EventBatcher
@@ -50,19 +56,12 @@ internal final class BatteryTracker {
         // Report level
         batcher.trackMetric(type: "battery", name: "level", value: Double(percentage), unit: "percent")
 
-        // Report thermal state (iOS 11+)
+        // Thermal state (iOS 11+). iOS exposes no battery-temperature API,
+        // so we report the OS thermal *state* — and only as a real event
+        // when it degrades to serious/critical. No fabricated temperature
+        // metric is emitted.
         if #available(iOS 11.0, *) {
             let thermalState = ProcessInfo.processInfo.thermalState
-            let tempEstimate: Double
-            switch thermalState {
-            case .nominal: tempEstimate = 30.0
-            case .fair: tempEstimate = 35.0
-            case .serious: tempEstimate = 40.0
-            case .critical: tempEstimate = 45.0
-            @unknown default: tempEstimate = 32.0
-            }
-            batcher.trackMetric(type: "battery", name: "temperature", value: tempEstimate, unit: "celsius")
-
             if thermalState == .serious || thermalState == .critical {
                 batcher.trackEvent(name: "thermal_warning", data: [
                     "state": String(describing: thermalState),

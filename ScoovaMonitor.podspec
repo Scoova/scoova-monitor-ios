@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'ScoovaMonitor'
-  s.version          = '1.4.2'
+  s.version          = '1.4.3'
   s.summary          = 'Crash reporting, analytics, performance, and logging for iOS apps.'
 
   s.description      = <<-DESC
