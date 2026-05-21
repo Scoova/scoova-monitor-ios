@@ -1,7 +1,13 @@
 import Foundation
 import UIKit
+#if canImport(Metal)
+import Metal
+#endif
+#if canImport(CoreTelephony)
+import CoreTelephony
+#endif
 
-internal let kSDKVersion = "1.4.3"
+internal let kSDKVersion = "1.5.0"
 
 internal final class DeviceContext {
     static let shared = DeviceContext()
@@ -39,6 +45,20 @@ internal final class DeviceContext {
         let first = !defaults.bool(forKey: key)
         if first { defaults.set(true, forKey: key) }
         return first
+    }
+
+    /// First-install timestamp persisted on the first SDK launch and stable
+    /// across upgrades / locale changes. Mirrors Android's
+    /// PackageInfo.firstInstallTime — Apple gives us no equivalent system
+    /// call, so we approximate by stamping the first time we run. Returned
+    /// in seconds since UNIX epoch.
+    func getInstallDate() -> TimeInterval {
+        let key = "install_date_epoch"
+        let existing = defaults.double(forKey: key)
+        if existing > 0 { return existing }
+        let now = Date().timeIntervalSince1970
+        defaults.set(now, forKey: key)
+        return now
     }
 
     func collect() -> [String: Any] {
@@ -95,6 +115,21 @@ internal final class DeviceContext {
         if let carrier = getCarrier() {
             info["carrier"] = carrier
         }
+
+        // Network generation (2G/3G/4G/5G). Uses CTTelephonyNetworkInfo —
+        // deprecated by Apple in iOS 16+ but still functions for older
+        // devices, which is the same posture BugSnag and Sentry take.
+        if let gen = getNetworkGeneration() {
+            info["networkGeneration"] = gen
+        }
+
+        // GPU renderer name via Metal. Permission-free, runs offline.
+        if let gpu = getGpuRenderer() {
+            info["gpuRenderer"] = gpu
+        }
+
+        // First-install timestamp (approximated — see getInstallDate notes).
+        info["installDate"] = Int64(getInstallDate())
 
         // Note: the SDK does not read device GPS location. Region (country /
         // city) is resolved server-side from the request IP at ingest — see
@@ -156,8 +191,67 @@ internal final class DeviceContext {
     }
 
     private func getCarrier() -> String? {
-        // CTCarrier is deprecated in iOS 16+, return nil for modern iOS
+        // CTCarrier is deprecated in iOS 16+; Apple no longer surfaces the
+        // carrier name to apps. Both BugSnag and Sentry leave this nil on
+        // modern iOS — we do the same. Pre-iOS 16 readers can still call
+        // CTTelephonyNetworkInfo().serviceSubscriberCellularProviders, but
+        // touching it triggers Xcode warnings and breaks future builds, so
+        // we keep this an explicit nil and document the rationale.
         return nil
+    }
+
+    /// 2G / 3G / 4G / 5G via CoreTelephony. Apple deprecated the precise
+    /// per-radio reading in iOS 16+, so on those releases this returns nil
+    /// for any service. On older iOS we still get a real answer. This is
+    /// the same approach BugSnag and Sentry use.
+    private func getNetworkGeneration() -> String? {
+        #if canImport(CoreTelephony)
+        let info = CTTelephonyNetworkInfo()
+        let radio: String?
+        if #available(iOS 12.0, *) {
+            radio = info.serviceCurrentRadioAccessTechnology?.values.first
+        } else {
+            radio = nil
+        }
+        guard let r = radio else { return nil }
+        switch r {
+        case CTRadioAccessTechnologyGPRS,
+             CTRadioAccessTechnologyEdge,
+             CTRadioAccessTechnologyCDMA1x:
+            return "2G"
+        case CTRadioAccessTechnologyWCDMA,
+             CTRadioAccessTechnologyHSDPA,
+             CTRadioAccessTechnologyHSUPA,
+             CTRadioAccessTechnologyCDMAEVDORev0,
+             CTRadioAccessTechnologyCDMAEVDORevA,
+             CTRadioAccessTechnologyCDMAEVDORevB,
+             CTRadioAccessTechnologyeHRPD:
+            return "3G"
+        case CTRadioAccessTechnologyLTE:
+            return "4G"
+        default:
+            if #available(iOS 14.1, *) {
+                if r == CTRadioAccessTechnologyNRNSA || r == CTRadioAccessTechnologyNR {
+                    return "5G"
+                }
+            }
+            return nil
+        }
+        #else
+        return nil
+        #endif
+    }
+
+    /// GPU renderer / Metal device name. Free, no permissions, no UI thread.
+    /// Returns nil on the simulator and on the rare device where Metal can't
+    /// initialise.
+    private func getGpuRenderer() -> String? {
+        #if canImport(Metal)
+        guard let device = MTLCreateSystemDefaultDevice() else { return nil }
+        return device.name
+        #else
+        return nil
+        #endif
     }
 
     private func detectFramework() -> String {

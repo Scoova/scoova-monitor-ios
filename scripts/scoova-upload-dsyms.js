@@ -12,19 +12,16 @@
  *   2. ZIPs each one (via the system `zip` binary; preserves file structure)
  *   3. POSTs each ZIP to /v1/upload/mapping with mappingType=dsym
  *
- * Usage (manual, from a Terminal):
- *   node scoova-upload-dsyms.js \
+ * Usage:
+ *   scoova-upload-dsyms \
  *     --api-key sm_xxx \
  *     --version 1.4.0 \
  *     --build 42 \
  *     --dir ~/Library/Developer/Xcode/Archives/.../MyApp.xcarchive/dSYMs
  *
- * Or in a Run Script Build Phase in Xcode. The script ships inside this
- * Swift Package, so it is already on disk once the SDK is added — point
- * the build phase at the SPM checkout:
+ * Or in a Run Script Build Phase in Xcode:
  *   if [ "$CONFIGURATION" = "Release" ]; then
- *       SCRIPT="${BUILD_DIR%Build/*}SourcePackages/checkouts/scoova-monitor-ios/scripts/scoova-upload-dsyms.js"
- *       node "$SCRIPT" \
+ *       npx scoova-upload-dsyms \
  *           --api-key "$SCOOVA_API_KEY" \
  *           --version "$MARKETING_VERSION" \
  *           --build "$CURRENT_PROJECT_VERSION" \
@@ -181,7 +178,7 @@ function usage() {
     console.error(`scoova-upload-dsyms — upload iOS dSYM bundles to Scoova Monitor
 
 Usage:
-  node scoova-upload-dsyms.js --api-key <KEY> --version <V> [--build <BUILD>] --dir <DIR> [--endpoint <URL>]
+  scoova-upload-dsyms --api-key <KEY> --version <V> [--build <BUILD>] --dir <DIR> [--endpoint <URL>]
 
 Required:
   --api-key   Scoova Monitor API key for the iOS platform
@@ -192,11 +189,9 @@ Optional:
   --build     Build number (recommended: $CURRENT_PROJECT_VERSION in Xcode)
   --endpoint  Override the Scoova endpoint (default: https://monitor.scoo-va.info)
 
-Xcode Run Script integration (Build Phases → New Run Script Phase, after Embed).
-The script ships inside this Swift Package, so it is already on disk:
+Xcode Run Script integration (Build Phases → New Run Script Phase, after Embed):
   if [ "$CONFIGURATION" = "Release" ]; then
-      SCRIPT="\${BUILD_DIR%Build/*}SourcePackages/checkouts/scoova-monitor-ios/scripts/scoova-upload-dsyms.js"
-      node "$SCRIPT" \\
+      npx scoova-upload-dsyms \\
           --api-key "$SCOOVA_API_KEY" \\
           --version "$MARKETING_VERSION" \\
           --build   "$CURRENT_PROJECT_VERSION" \\

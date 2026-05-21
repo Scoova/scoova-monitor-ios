@@ -1,8 +1,7 @@
 # Scoova Monitor — iOS SDK
 
-Crash reporting, analytics, performance, and battery monitoring for iOS
-apps. iOS 14+, pure Swift, no Objective-C bridging required. Ships for
-both Swift Package Manager and CocoaPods.
+Swift Package for crash reporting, analytics, performance, and battery
+monitoring. iOS 14+, no Objective-C bridging required.
 
 ## Install
 
@@ -16,27 +15,17 @@ https://github.com/Scoova/scoova-monitor-ios
 
 Select the `ScoovaMonitor` library and add it to your app target.
 
-### Swift Package Manager (Package.swift)
+### Package.swift
 
 ```swift
-.package(url: "https://github.com/Scoova/scoova-monitor-ios", from: "1.4.0")
+.package(url: "https://github.com/Scoova/scoova-monitor-ios", from: "1.5.0")
 ```
 
-Then add the product to your target:
+Then:
 
 ```swift
 .product(name: "ScoovaMonitor", package: "scoova-monitor-ios")
 ```
-
-### CocoaPods
-
-Add to your `Podfile`:
-
-```ruby
-pod 'ScoovaMonitor', '~> 1.4.0'
-```
-
-Then run `pod install`.
 
 ## Usage
 
@@ -171,10 +160,7 @@ maps Xcode strips out of the shipping binary — need to be uploaded.
 It's a **one-time setup**, then it runs automatically on every release
 build (the same model Crashlytics uses). In Xcode: select your app target
 → **Build Phases** → **+** → **New Run Script Phase**, drag it **after**
-the *Embed Frameworks* phase, and paste the snippet for how you installed
-the SDK.
-
-**Swift Package Manager:**
+the *Embed Frameworks* phase, and paste:
 
 ```sh
 if [ "$CONFIGURATION" = "Release" ]; then
@@ -187,28 +173,15 @@ if [ "$CONFIGURATION" = "Release" ]; then
 fi
 ```
 
-**CocoaPods:**
-
-```sh
-if [ "$CONFIGURATION" = "Release" ]; then
-  node "${PODS_ROOT}/ScoovaMonitor/scripts/scoova-upload-dsyms.js" \
-    --api-key "$SCOOVA_API_KEY" \
-    --version "$MARKETING_VERSION" \
-    --build "$CURRENT_PROJECT_VERSION" \
-    --dir "$DWARF_DSYM_FOLDER_PATH"
-fi
-```
-
 Add `SCOOVA_API_KEY` as a User-Defined Build Setting on the target (or
 paste your key directly). That's the whole setup — every Release build now
 uploads its own dSYMs.
 
-The script ships **inside the SDK package** (SwiftPM checkout or
-`Pods/ScoovaMonitor/`), so it is already on disk once you add the SDK —
-nothing extra to download. It needs Node on the build machine
-(preinstalled on most Macs; CI runners may need a setup step). It walks
-`$DWARF_DSYM_FOLDER_PATH` for `*.app.dSYM` bundles, zips each, and uploads
-them to `/v1/upload/mapping`.
+The script ships **inside this Swift Package**, so it is already on disk
+once you add the SDK — nothing extra to download. It needs Node on the
+build machine (preinstalled on most Macs; CI runners may need a setup
+step). It walks `$DWARF_DSYM_FOLDER_PATH` for `*.app.dSYM` bundles, zips
+each, and uploads them to `/v1/upload/mapping`.
 
 ## Building from source
 
@@ -221,4 +194,4 @@ iOS SDK).
 
 ## License
 
-[Apache 2.0](LICENSE).
+[Apache 2.0](../LICENSE).
