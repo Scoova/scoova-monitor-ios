@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.1 — 2026-05-21
+
+### Fixed
+- Log-batch uploads (`/v1/ingest/logs/batch`) now send the `X-Bundle-Id`
+  header, like every other ingest path. The server uses it to confirm
+  data came from the app registered to the API key.
+
 ## 1.5.0 — 2026-05-21
 
 ### Added

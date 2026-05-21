@@ -18,7 +18,7 @@ Select the `ScoovaMonitor` library and add it to your app target.
 ### Package.swift
 
 ```swift
-.package(url: "https://github.com/Scoova/scoova-monitor-ios", from: "1.5.0")
+.package(url: "https://github.com/Scoova/scoova-monitor-ios", from: "1.5.1")
 ```
 
 Then:

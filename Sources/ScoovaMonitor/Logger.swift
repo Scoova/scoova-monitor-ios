@@ -106,6 +106,10 @@ internal final class LogQueue {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(ScoovaMonitor.shared.apiKey, forHTTPHeaderField: "X-API-Key")
+        // Bundle ID lets the server confirm these logs came from the app
+        // registered to this key (validateApiKeyWithBundle). Every other
+        // ingest path already sends it — logs was the one that didn't.
+        request.setValue(ScoovaMonitor.shared.bundleId, forHTTPHeaderField: "X-Bundle-Id")
         request.httpBody = jsonData
         request.timeoutInterval = 10
 

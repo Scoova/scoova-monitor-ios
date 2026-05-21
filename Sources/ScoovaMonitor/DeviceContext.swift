@@ -7,7 +7,7 @@ import Metal
 import CoreTelephony
 #endif
 
-internal let kSDKVersion = "1.5.0"
+internal let kSDKVersion = "1.5.1"
 
 internal final class DeviceContext {
     static let shared = DeviceContext()
