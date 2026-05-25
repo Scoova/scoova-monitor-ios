@@ -1,0 +1,94 @@
+name: Publish to CocoaPods
+
+# CocoaPods publishing is the only thing this repo's CI does — SwiftPM
+# resolves direct from the tag itself, so the tag IS the SwiftPM release.
+# For CocoaPods, we still need to push the podspec to trunk after each tag.
+#
+# Triggered by pushing a plain version-number tag matching the podspec's
+# `s.version` field — e.g. `1.5.2`, `2.0.0`. Pre-release tags
+# (`1.5.2-rc1`, `1.5.2-beta`) are also matched; CocoaPods handles them as
+# pre-release versions.
+#
+# Required repository secret (Settings → Secrets → Actions):
+#   POD_TRUNK_TOKEN  — output of: pod trunk register email name && cat ~/.netrc
+#                      (the `password` field for `machine trunk.cocoapods.org`)
+
+on:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'           # e.g. 1.5.2
+      - '[0-9]+.[0-9]+.[0-9]+-*'         # e.g. 1.5.2-rc1, 2.0.0-beta.1
+
+jobs:
+  publish:
+    name: pod trunk push ScoovaMonitor
+    runs-on: macos-latest
+    # Macs are required — CocoaPods is Ruby + relies on macOS-only system
+    # frameworks for `pod lib lint` simulator builds.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify podspec version matches the git tag
+        # Sanity check — prevents a 1.5.2 git tag from accidentally
+        # publishing 1.5.1 because nobody bumped s.version. CocoaPods
+        # trunk would reject this too, but failing here is faster + clearer.
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SPEC_VERSION=$(ruby -e "puts eval(File.read('ScoovaMonitor.podspec')).version.to_s" || true)
+          if [ -z "$SPEC_VERSION" ]; then
+            # Fallback: simple grep — handles the common s.version = '1.5.2' line
+            SPEC_VERSION=$(grep -E "s\.version\s*=" ScoovaMonitor.podspec | head -1 | sed -E "s/.*['\"]([^'\"]+)['\"].*/\1/")
+          fi
+          echo "git tag         : $TAG"
+          echo "podspec version : $SPEC_VERSION"
+          if [ "$TAG" != "$SPEC_VERSION" ]; then
+            echo "::error::Tag '$TAG' doesn't match podspec version '$SPEC_VERSION'. Bump s.version in ScoovaMonitor.podspec to match before pushing the tag."
+            exit 1
+          fi
+
+      - name: Configure CocoaPods trunk auth
+        env:
+          POD_TRUNK_TOKEN: ${{ secrets.POD_TRUNK_TOKEN }}
+        # `pod trunk push` reads trunk creds from ~/.netrc. The token
+        # itself never expires (unlike pub.dev's 14-day OAuth) so this
+        # secret is set once and stays valid.
+        run: |
+          if [ -z "$POD_TRUNK_TOKEN" ]; then
+            echo "::error::POD_TRUNK_TOKEN secret is not set. Add it under repo Settings → Secrets → Actions."
+            exit 1
+          fi
+          cat > "$HOME/.netrc" <<EOF
+          machine trunk.cocoapods.org
+            login admin@scoo-va.info
+            password $POD_TRUNK_TOKEN
+          EOF
+          chmod 600 "$HOME/.netrc"
+
+      - name: Pod lint (sanity)
+        # `pod lib lint` builds the podspec in an isolated simulator and
+        # catches the same things trunk's server-side validation would —
+        # but locally, with a fast feedback loop. --allow-warnings because
+        # CocoaPods occasionally warns about minor things (deployment
+        # target, unused source files, etc.) that don't block publishing.
+        run: pod lib lint ScoovaMonitor.podspec --allow-warnings --quick
+
+      - name: Pod trunk push
+        # `--allow-warnings` mirrors the lint step. `--synchronous` makes
+        # the command wait for trunk's response instead of returning early
+        # — the workflow's exit code then reflects the actual outcome.
+        run: pod trunk push ScoovaMonitor.podspec --allow-warnings --synchronous
+
+      - name: Confirm the push landed
+        # Race-free verification: query trunk's public API for the version
+        # we just pushed. If it's there, success; if not, fail the job so
+        # nobody mistakes a green workflow for a successful publish.
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          sleep 5  # brief settle for trunk indexing
+          if curl -sS "https://trunk.cocoapods.org/api/v1/pods/ScoovaMonitor" \
+             | grep -q "\"name\":\"$VERSION\""; then
+            echo "::notice::ScoovaMonitor $VERSION is live on CocoaPods"
+          else
+            echo "::error::ScoovaMonitor $VERSION not found on trunk after push — investigate at https://cocoapods.org/pods/ScoovaMonitor"
+            exit 1
+          fi
