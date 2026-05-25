@@ -192,6 +192,38 @@ xcodebuild -scheme ScoovaMonitor -destination 'generic/platform=iOS' build
 `swift build` won't work on macOS hosts (UIKit isn't available outside the
 iOS SDK).
 
+## Releasing
+
+This mirror auto-publishes both distribution channels on a tag push:
+
+- **SwiftPM** — the git tag itself is the release. Xcode resolves
+  `from: "1.5.2"` directly from the tag, no extra step.
+- **CocoaPods** — the [`.github/workflows/publish-cocoapods.yml`](.github/workflows/publish-cocoapods.yml)
+  workflow fires when a plain SemVer tag (e.g. `1.5.2`) is pushed.
+  It verifies the tag matches `s.version` in `ScoovaMonitor.podspec`,
+  authenticates with the long-lived `POD_TRUNK_TOKEN` repo secret, runs
+  `pod lib lint --quick`, then `pod trunk push` and finally polls the
+  trunk API to confirm the version landed.
+
+Release ritual:
+
+```bash
+# 1. bump ScoovaMonitor.podspec → s.version = '1.5.2'
+# 2. bump CHANGELOG.md
+# 3. sync Sources/ from the monorepo's sdk-ios/Sources/ if there are
+#    SDK changes (rsync -avz --delete ../scoova-monitor/sdk-ios/Sources/ ./Sources/)
+git add -A
+git commit -m "1.5.2"
+git tag 1.5.2 HEAD
+git push origin main 1.5.2
+```
+
+Both channels are live within ~30s of the tag landing on GitHub.
+
+The full release procedure across all 5 SDKs is documented at
+[`scoova-monitor/RELEASING.md`](https://github.com/zaidzedoo007/scoova-monitor/blob/main/RELEASING.md)
+in the monorepo (private).
+
 ## License
 
 [Apache 2.0](../LICENSE).
